@@ -433,13 +433,13 @@
 
                     // Asignee
                     const asigneeId = asignee.attr('rel') as string;
-                    const asigneeName = asignee.text();
-                    const asigneeAvatarUrl = asignee.find('img').attr('src');
+                    const asigneeName = asignee.text().replace(/(\r\n|\n|\r)/gm, "");
+                    const asigneeAvatarUrl = asignee.find('img').attr('src') as string;
 
                     // Author
                     const authorId = author.attr('rel') as string;
-                    const authorName = author.text();
-                    const authorAvatarUrl = author.find('img').attr('src');
+                    const authorName = author.text().replace(/(\r\n|\n|\r)/gm, "");
+                    const authorAvatarUrl = author.find('img').attr('src') as string;
 
                     return resolve({
                         validTimeModule,
