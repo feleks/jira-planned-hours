@@ -1,101 +1,49 @@
+// ==UserScript==
+// @name         JiraPlannedHours
+// @namespace    https://jira.kalabi.ru/
+// @version      1.1
+// @description  Добавляет функционал просмотра загруженности работников по времени и анализа отклонений
+// @author       feleks
+// @match        https://jira.kalabi.ru/*
+// @require      https://momentjs.com/downloads/moment.js
+// @require      http://code.jquery.com/jquery-latest.js
+// @grant        GM_xmlhttpRequest
+// ==/UserScript==
+
 (function () {
-    type TaskID = string;
-    type ColumnID = string;
-
-    interface ITaskDetails {
-        validTimeModule: boolean;
-        plannedHours: number;
-        spentHours: number;
-        title: string;
-        asigneeId: string;
-        asigneeName: string;
-        asigneeAvatarUrl?: string;
-        authorId: string;
-        authorName: string;
-        authorAvatarUrl?: string;
-    }
-
-    interface ITaskInfo {
-        id: TaskID;
-        columnId: string;
-        details: ITaskDetails;
-    }
-
-    interface ITasksInfo {
-        totalTasksCount: number;
-        lastUpdateDate: number;
-        allTasks: ITaskInfo[];
-        persons: {
-            name: string;
-            tasksByColumnId: {
-                [columnId: string]: ITaskInfo[];
-            };
-        }[];
-        tasksWithoutPlannedTime: ITaskInfo[];
-    }
-
-    interface IElements {
-        '#jira-planned-hours': JQuery<HTMLElement>;
-        '#jira-planned-hours-control-bar': JQuery<HTMLElement>;
-        '#jira-planned-hours-count': JQuery<HTMLElement>;
-        '#jira-planned-hours-loading': JQuery<HTMLElement>;
-        '#jira-planned-hours-loading-bar': JQuery<HTMLElement>;
-        '#jira-planned-hours-loading-bar-fill': JQuery<HTMLElement>;
-        '#jira-planned-hours-loading-value': JQuery<HTMLElement>;
-        '#jira-planned-hours-info-bar': JQuery<HTMLElement>;
-        '#jira-planned-hours-clear': JQuery<HTMLElement>;
-        '#jira-planned-hours-find-bad-tasks': JQuery<HTMLElement>;
-    }
-
-    interface IColumnsInfo {
-        titles: {
-            [titleName: string]: string;
-        };
-        list: string[];
-        set: Set<string>;
-    }
-
     const LOADING_BAR_WIDTH = 300;
     const MAX_GHX_POOL_SEARCH_RETRIES = 10;
     const TASK_PLAN_DEVIATION_BORDER = 0;
-
-    let TXID: number = 0;
-    let ELEMENTS: IElements;
-    let COLUMNS_INFO: IColumnsInfo;
+    let TXID = 0;
+    let ELEMENTS;
+    let COLUMNS_INFO;
     let LOADING_BAR_SHOWN = false;
-
     if ($ == null) {
         return;
     }
-
     $(document).ready(() => {
         console.log('starting jira_planned_hours script. AQ');
-
         let retries = 0;
         const intervalId = setInterval(() => {
             retries += 1;
-
             if (retries >= MAX_GHX_POOL_SEARCH_RETRIES) {
                 console.log(`reached max retries waiting for #ghx-pool-column (${retries}/${MAX_GHX_POOL_SEARCH_RETRIES})`);
                 clearInterval(intervalId);
                 return;
             }
-
             console.log(`ensuring #ghx-pool-column exists (retries: ${retries}/${MAX_GHX_POOL_SEARCH_RETRIES})`);
-
             const poolColumnDiv = $('#ghx-pool-column');
             if (poolColumnDiv.length === 0) {
                 console.log('#ghx-pool-column does not exist yet.');
                 return;
-            } else {
+            }
+            else {
                 console.log('#ghx-pool-column exists.');
                 clearInterval(intervalId);
-
                 init();
             }
         }, 1000);
     });
-
     function init() {
         const barDiv = $(`
             <style>
@@ -250,7 +198,6 @@
                 </div>
             </div>
         `);
-
         ELEMENTS = {
             '#jira-planned-hours': barDiv.find('#jira-planned-hours'),
             '#jira-planned-hours-control-bar': barDiv.find('#jira-planned-hours-control-bar'),
@@ -263,96 +210,83 @@
             '#jira-planned-hours-clear': barDiv.find('#jira-planned-hours-clear'),
             '#jira-planned-hours-find-bad-tasks': barDiv.find('#jira-planned-hours-find-bad-tasks')
         };
-
         ELEMENTS['#jira-planned-hours-count'].click(countPlannedHours);
         ELEMENTS['#jira-planned-hours-clear'].click(clear);
-
         const poolColumnDiv = $('#ghx-pool-column');
         poolColumnDiv.prepend(barDiv);
-
         const initialTasksInfo = getTasksInfoFromLocalStorage();
         if (initialTasksInfo != null) {
             showTasksInfo(initialTasksInfo);
         }
     }
-
     // Planned time lib func
-
-    function plannedTimeToHours(plannedTime: string): number {
+    function plannedTimeToHours(plannedTime) {
         if (plannedTime === 'Не определено') {
             return 0;
         }
-
         let minutes = 0;
         for (let timeUnit of plannedTime.split(' ')) {
             const unitAmount = parseInt(timeUnit.slice(0, timeUnit.length - 1));
-
             if (timeUnit.indexOf('w') != -1) {
                 minutes += unitAmount * 5 * 8 * 60;
-            } else if (timeUnit.indexOf('d') != -1) {
+            }
+            else if (timeUnit.indexOf('d') != -1) {
                 minutes += unitAmount * 8 * 60;
-            } else if (timeUnit.indexOf('h') != -1) {
+            }
+            else if (timeUnit.indexOf('h') != -1) {
                 minutes += unitAmount * 60;
-            } else if (timeUnit.indexOf('m') != -1) {
+            }
+            else if (timeUnit.indexOf('m') != -1) {
                 minutes += unitAmount;
-            } else {
+            }
+            else {
                 throw new Error('invalid planned time: ' + plannedTime);
             }
         }
-
         return minutes / 60;
     }
-
     // Local storage
-
-    function saveTasksInfoToLocalStorage(tasksInfo: ITasksInfo) {
+    function saveTasksInfoToLocalStorage(tasksInfo) {
         localStorage.setItem('jira-planned-hours-tasks-info', JSON.stringify(tasksInfo));
     }
-
     function getTasksInfoFromLocalStorage() {
         const tasksInfo = localStorage.getItem('jira-planned-hours-tasks-info');
         if (tasksInfo == null) {
             return null;
-        } else {
+        }
+        else {
             const tasksInfoParsed = JSON.parse(tasksInfo);
             tasksInfoParsed.lastUpdateDate = new Date(tasksInfoParsed.lastUpdateDate);
             return tasksInfoParsed;
         }
     }
-
     function clearTasksInfoFromLocalStorage() {
         localStorage.removeItem('jira-planned-hours-tasks-info');
     }
-
     // Loading bar
-
     function startLoadingBar() {
         if (LOADING_BAR_SHOWN) {
             return;
         }
-
         ELEMENTS['#jira-planned-hours-loading'].css('opacity', '1');
         ELEMENTS['#jira-planned-hours-loading-bar-fill'].css('width', '0px');
         ELEMENTS['#jira-planned-hours-loading-value'].text('');
         LOADING_BAR_SHOWN = true;
     }
-
-    function updateLoadingBar(current: number, total: number) {
+    function updateLoadingBar(current, total) {
         if (!LOADING_BAR_SHOWN) {
             return;
         }
-
         let width = 0;
         if (current >= total) {
             width = LOADING_BAR_WIDTH;
-        } else {
+        }
+        else {
             width = (current / total) * LOADING_BAR_WIDTH;
         }
-
         ELEMENTS['#jira-planned-hours-loading-bar-fill'].css('width', `${width}px`);
         ELEMENTS['#jira-planned-hours-loading-value'].text(`${current}/${total} (${((current / total) * 100).toFixed(1)}%)`);
     }
-
     function stopLoadingBar() {
         if (!LOADING_BAR_SHOWN) {
             return;
@@ -362,37 +296,30 @@
         ELEMENTS['#jira-planned-hours-loading-value'].text('');
         LOADING_BAR_SHOWN = false;
     }
-
     // Columns
-
     function getColumnsInfo() {
         if (COLUMNS_INFO != null) {
             return COLUMNS_INFO;
         }
-
-        let titles: { [column_title: string]: string } = {};
-        let list: string[] = [];
-
+        let titles = {};
+        let list = [];
         const columns = $('#ghx-column-headers > .ghx-column');
         for (let i = 0; i < columns.length; ++i) {
             const column = columns.get(i);
             const id = column.dataset.id;
             const titleHtml = column.querySelector('.ghx-column-title');
-
             if (id == null) {
                 throw new Error('could not find id in dataset of ' + column);
             }
-
             if (titleHtml != null) {
                 const title = titleHtml.innerHTML;
-
                 list.push(id);
                 titles[id] = title;
-            } else {
+            }
+            else {
                 throw new Error('could not find .ghx-column-title');
             }
         }
-
         const columns_info = {
             titles: titles,
             list: list,
@@ -401,81 +328,71 @@
         COLUMNS_INFO = columns_info;
         return columns_info;
     }
-
     // Tasks
-
-    function getTaskDetails(taskId: TaskID): Promise<ITaskDetails> {
+    function getTaskDetails(taskId) {
         const taskUrl = `https://jira.kalabi.ru/browse/${taskId}`;
-
         return new Promise((resolve, reject) => {
             $.get(taskUrl)
                 .done((data) => {
-                    const htmlData = $(data);
-                    const origTime = htmlData.find('#tt_single_values_orig');
-                    const spentTime = htmlData.find('#tt_single_values_spent');
-                    const title = htmlData.find('#summary-val');
-                    const asignee = htmlData.find('#assignee-val .user-hover');
-                    const author = htmlData.find('#reporter-val .user-hover');
-
-                    // Time
-                    let validTimeModule = true;
-                    let plannedHours = 0;
-                    let spentHours = 0;
-                    if (origTime.length == 0 || spentTime.length == 0) {
-                        console.warn('could not find time module elements for task ' + taskId);
-                        validTimeModule = false;
-                    } else {
-                        const origTimeRaw = origTime.get(0).innerHTML.trim();
-                        const spentTimeRaw = spentTime.get(0).innerHTML.trim();
-
-                        plannedHours = plannedTimeToHours(origTimeRaw);
-                        spentHours = plannedTimeToHours(spentTimeRaw);
-                    }
-
-                    // Asignee
-                    const asigneeId = asignee.attr('rel') as string;
-                    let asigneeName = asignee
-                        .text()
-                        .replace(/(\r\n|\n|\r)/gm, '')
-                        .trim();
-                    const asigneeAvatarUrl = asignee.find('img').attr('src') as string;
-                    if (asigneeName.length === 0) {
-                        asigneeName = 'Не назначен';
-                    }
-
-                    // Author
-                    const authorId = author.attr('rel') as string;
-                    const authorName = author
-                        .text()
-                        .replace(/(\r\n|\n|\r)/gm, '')
-                        .trim();
-                    const authorAvatarUrl = author.find('img').attr('src') as string;
-
-                    return resolve({
-                        validTimeModule,
-                        plannedHours,
-                        spentHours,
-                        title: title.text(),
-                        asigneeId,
-                        asigneeName,
-                        asigneeAvatarUrl,
-                        authorId,
-                        authorName,
-                        authorAvatarUrl
-                    });
-                })
-                .fail((err) => {
-                    reject(err);
+                const htmlData = $(data);
+                const origTime = htmlData.find('#tt_single_values_orig');
+                const spentTime = htmlData.find('#tt_single_values_spent');
+                const title = htmlData.find('#summary-val');
+                const asignee = htmlData.find('#assignee-val .user-hover');
+                const author = htmlData.find('#reporter-val .user-hover');
+                // Time
+                let validTimeModule = true;
+                let plannedHours = 0;
+                let spentHours = 0;
+                if (origTime.length == 0 || spentTime.length == 0) {
+                    console.warn('could not find time module elements for task ' + taskId);
+                    validTimeModule = false;
+                }
+                else {
+                    const origTimeRaw = origTime.get(0).innerHTML.trim();
+                    const spentTimeRaw = spentTime.get(0).innerHTML.trim();
+                    plannedHours = plannedTimeToHours(origTimeRaw);
+                    spentHours = plannedTimeToHours(spentTimeRaw);
+                }
+                // Asignee
+                const asigneeId = asignee.attr('rel');
+                let asigneeName = asignee
+                    .text()
+                    .replace(/(\r\n|\n|\r)/gm, '')
+                    .trim();
+                const asigneeAvatarUrl = asignee.find('img').attr('src');
+                if (asigneeName.length === 0) {
+                    asigneeName = 'Не назначен';
+                }
+                // Author
+                const authorId = author.attr('rel');
+                const authorName = author
+                    .text()
+                    .replace(/(\r\n|\n|\r)/gm, '')
+                    .trim();
+                const authorAvatarUrl = author.find('img').attr('src');
+                return resolve({
+                    validTimeModule,
+                    plannedHours,
+                    spentHours,
+                    title: title.text(),
+                    asigneeId,
+                    asigneeName,
+                    asigneeAvatarUrl,
+                    authorId,
+                    authorName,
+                    authorAvatarUrl
                 });
+            })
+                .fail((err) => {
+                reject(err);
+            });
         });
     }
-
-    function getTaskIdsFromSprintPage(): [TaskID[], { [taskId: string]: ColumnID }] {
-        let taskIds: TaskID[] = [];
-        let taskIdToColumnId: { [taskId: string]: string } = {};
-
+    function getTaskIdsFromSprintPage() {
+        let taskIds = [];
+        let taskIdToColumnId = {};
         const swimlaneDivs = document.querySelectorAll('.ghx-swimlane');
-
         for (let swimlaneDiv of swimlaneDivs) {
             const headingDiv = swimlaneDiv.querySelector('.ghx-swimlane-header');
             if (headingDiv == null) {
@@ -485,15 +402,12 @@
             if (nameSpan == null) {
                 throw new Error('nameSpan is null');
             }
-
             const columnDivs = swimlaneDiv.querySelectorAll('.ghx-column');
-
             for (let columnDiv of columnDivs) {
-                const columnId = (columnDiv as any).dataset.columnId;
+                const columnId = columnDiv.dataset.columnId;
                 if (columnId == null) {
                     throw new Error('columnId is null');
                 }
-
                 const taskDivs = columnDiv.querySelectorAll('.ghx-issue');
                 for (let taskDiv of taskDivs) {
                     const taskIdDiv = taskDiv.querySelector('.ghx-key > a');
@@ -504,97 +418,78 @@
                     if (taskId == null) {
                         throw new Error('taskId is null');
                     }
-
                     taskIds.push(taskId);
                     taskIdToColumnId[taskId] = columnId;
                 }
             }
         }
-
         return [taskIds, taskIdToColumnId];
     }
-
-    async function getTasksInfo(taskIds: TaskID[], taskIdToColumnId: { [taskId: string]: ColumnID }): Promise<ITasksInfo> {
+    async function getTasksInfo(taskIds, taskIdToColumnId) {
         TXID += 1;
         const txId = TXID;
         startLoadingBar();
-
         const columnsInfo = getColumnsInfo();
         let totalTasksCount = taskIds.length;
-
         console.log('taskIds', taskIdToColumnId);
         console.log('taskIdToColumnId', taskIdToColumnId);
-
-        let allTasks: ITaskInfo[] = [];
-        let tasksWithoutPlannedTime: ITaskInfo[] = [];
+        let allTasks = [];
+        let tasksWithoutPlannedTime = [];
         let fetchedTasksCount = 0;
-        let personsMap = new Map<string, Map<string, ITaskInfo[]>>();
+        let personsMap = new Map();
         startLoadingBar();
-
         for (let taskId of taskIds) {
             if (txId != TXID) {
                 throw new Error(`TXID has changed (from ${txId} to ${TXID}). tasks update aborted.`);
             }
-
             const columnId = taskIdToColumnId[taskId];
             if (columnId == null) {
                 throw new Error('could not find column id for task ' + taskId);
             }
             const taskDetails = await getTaskDetails(taskId);
-            const task: ITaskInfo = {
+            const task = {
                 id: taskId,
                 details: taskDetails,
                 columnId
             };
-
             if (!taskDetails.validTimeModule) {
                 tasksWithoutPlannedTime.push(task);
             }
-
             allTasks.push(task);
-
             if (!personsMap.has(task.details.asigneeName)) {
                 personsMap.set(task.details.asigneeName, new Map());
             }
             let personMap = personsMap.get(task.details.asigneeName);
-            if (!personMap?.has(columnId)) {
-                personMap?.set(columnId, []);
+            if (!(personMap === null || personMap === void 0 ? void 0 : personMap.has(columnId))) {
+                personMap === null || personMap === void 0 ? void 0 : personMap.set(columnId, []);
             }
-            let personColumnTasks = personMap?.get(columnId);
-            personColumnTasks?.push(task);
-
+            let personColumnTasks = personMap === null || personMap === void 0 ? void 0 : personMap.get(columnId);
+            personColumnTasks === null || personColumnTasks === void 0 ? void 0 : personColumnTasks.push(task);
             fetchedTasksCount += 1;
             updateLoadingBar(fetchedTasksCount, totalTasksCount);
         }
-
-        let persons: ITasksInfo['persons'] = [];
+        let persons = [];
         personsMap.forEach((person, name) => {
-            let tasksByColumnId: ITasksInfo['persons'][0]['tasksByColumnId'] = {};
-
+            let tasksByColumnId = {};
             person.forEach((columnTasks, columnId) => {
                 tasksByColumnId[columnId] = columnTasks;
             });
-
             persons.push({
                 name,
                 tasksByColumnId
             });
         });
-
         // for (let person of persons) {
         //     for (let columnId of columnsInfo.list) {
         //         for (let task of person.tasksByColumnId[columnId]) {
         //             if (txId != TXID) {
         //                 throw new Error(`TXID has changed (from ${txId} to ${TXID}). tasks update aborted.`);
         //             }
-
         //             const timeInfo = await getTaskDetails(task.id);
         //             if (!timeInfo.validTimeModule) {
         //                 tasksWithoutPlannedTime.push(task);
         //             }
-
         //             allTasks.push(task);
-
         //             fetchedTasksCount += 1;
         //             updateLoadingBar(fetchedTasksCount, totalTasksCount);
         //             task.details = timeInfo;
@@ -602,9 +497,7 @@
         //         }
         //     }
         // }
-
         stopLoadingBar();
-
         return {
             totalTasksCount,
             allTasks,
@@ -613,25 +506,21 @@
             lastUpdateDate: Date.now()
         };
     }
-
     // Presentation
-
-    function addSpoilerBlock(title: string, content: JQuery<HTMLElement>): void {
+    function addSpoilerBlock(title, content) {
         let shown = true;
         let setDisplay = () => {
             if (shown) {
                 contentElement.css('display', 'none');
                 titleActionElement.text('Развернуть');
-            } else {
+            }
+            else {
                 contentElement.css('display', 'block');
                 titleActionElement.text('Свернуть');
             }
-
             shown = !shown;
         };
-
         const infoElement = ELEMENTS['#jira-planned-hours-info-bar'];
-
         const spoilerElement = $(`
             <div class="jira-planned-hours-spoiler">
                 <div class="jira-planned-hours-spoiler-title">
@@ -642,23 +531,17 @@
                 </div>
             </div>
         `);
-
         const contentElement = spoilerElement.find('.jira-planned-hours-spoiler-content');
         const titleElement = spoilerElement.find('.jira-planned-hours-spoiler-title');
         const titleActionElement = spoilerElement.find('.jira-planned-hours-spoiler-title-action');
-
         contentElement.append(content);
-
         setDisplay();
         titleElement.click(setDisplay);
-
         infoElement.append(spoilerElement);
     }
-
-    function generateTimeByPersonElement(tasksInfo: ITasksInfo): JQuery<HTMLElement> {
+    function generateTimeByPersonElement(tasksInfo) {
         const columnsInfo = getColumnsInfo();
         const timeByPerson = $('<div class="jira-planned-hours-time-by-person"></div>');
-
         for (let person of tasksInfo.persons) {
             const personElement = $(`
                 <div class="jira-planned-hours-person-info">
@@ -676,44 +559,36 @@
                 </div>
             `);
             const tableElement = personElement.find('.jira-planned-hours-person-info-table');
-
             // Все префиксы
             for (let i = 0; i < columnsInfo.list.length; ++i) {
                 let title = '';
                 let plannedHours = 0;
                 let spentHours = 0;
-
                 for (let j = 0; j <= i; ++j) {
                     const columnId = columnsInfo.list[j];
                     const columnTitle = columnsInfo.titles[columnId];
                     title += columnTitle;
-
                     if (j < i) {
                         if (i != 0) {
                             title += ' +';
                         }
                         title += '</br>';
                     }
-
                     if (i == columnsInfo.list.length - 1) {
                         title = 'Все';
                     }
-
                     let tasks = person.tasksByColumnId[columnId];
                     if (tasks == null) {
                         tasks = [];
                     }
-
                     for (let taskInfo of tasks) {
                         if (taskInfo.details == null || !taskInfo.details.validTimeModule) {
                             continue;
                         }
-
                         plannedHours += taskInfo.details.plannedHours;
                         spentHours += taskInfo.details.spentHours;
                     }
                 }
-
                 const rowElement = $(`
                     <tr>
                         <td>${title}</td>
@@ -722,39 +597,34 @@
                         <td>${(plannedHours - spentHours).toFixed(1)}ч</td>
                     </tr>
                 `);
-
                 tableElement.append(rowElement);
             }
-
             timeByPerson.append(personElement);
         }
-
         return timeByPerson;
     }
-
-    function generateAsigneeAndAuthor(task): [string, string] {
+    function generateAsigneeAndAuthor(task) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
         let asignee = 'Не назначен';
-        if (task.details?.asigneeName != null && task.details?.asigneeName.length > 0) {
+        if (((_a = task.details) === null || _a === void 0 ? void 0 : _a.asigneeName) != null && ((_b = task.details) === null || _b === void 0 ? void 0 : _b.asigneeName.length) > 0) {
             let avatar = '';
-            if (task.details?.asigneeAvatarUrl != null) {
-                avatar = `<img src="${task.details?.asigneeAvatarUrl}"></img> `;
+            if (((_c = task.details) === null || _c === void 0 ? void 0 : _c.asigneeAvatarUrl) != null) {
+                avatar = `<img src="${(_d = task.details) === null || _d === void 0 ? void 0 : _d.asigneeAvatarUrl}"></img> `;
             }
-            asignee = `${avatar}${task.details?.asigneeName}`;
+            asignee = `${avatar}${(_e = task.details) === null || _e === void 0 ? void 0 : _e.asigneeName}`;
         }
-
         let author = 'Отсутствует';
-        if (task.details?.authorName != null && task.details?.authorName.length > 0) {
+        if (((_f = task.details) === null || _f === void 0 ? void 0 : _f.authorName) != null && ((_g = task.details) === null || _g === void 0 ? void 0 : _g.authorName.length) > 0) {
             let avatar = '';
-            if (task.details?.authorAvatarUrl != null) {
-                avatar = `<img src="${task.details?.authorAvatarUrl}"></img> `;
+            if (((_h = task.details) === null || _h === void 0 ? void 0 : _h.authorAvatarUrl) != null) {
+                avatar = `<img src="${(_j = task.details) === null || _j === void 0 ? void 0 : _j.authorAvatarUrl}"></img> `;
             }
-            author = `${avatar}${task.details?.authorName}`;
+            author = `${avatar}${(_k = task.details) === null || _k === void 0 ? void 0 : _k.authorName}`;
         }
-
         return [asignee, author];
     }
-
-    function generateTasksWithoutPlannedTimeElement(tasksInfo: ITasksInfo): JQuery<HTMLElement> {
+    function generateTasksWithoutPlannedTimeElement(tasksInfo) {
+        var _a;
         const tasksWithoutPlannedTime = $(`
             <table class="jira-planned-hours-tasks-without-planned-time">
                 <tr>
@@ -765,18 +635,15 @@
                 </tr>
             </table>
         `);
-
         for (let task of tasksInfo.tasksWithoutPlannedTime) {
             let [asignee, author] = generateAsigneeAndAuthor(task);
-
-            tasksWithoutPlannedTime.append(
-                $(`
+            tasksWithoutPlannedTime.append($(`
                 <tr>
                     <td>
                         <a href="https://jira.kalabi.ru/browse/${task.id}">${task.id}</a>
                     </td>
                     <td>
-                        ${task.details?.title}
+                        ${(_a = task.details) === null || _a === void 0 ? void 0 : _a.title}
                     </td>
                     <td>
                         ${asignee}
@@ -785,91 +652,67 @@
                         ${author}
                     </td>
                 </tr>
-            `)
-            );
+            `));
         }
-
         return tasksWithoutPlannedTime;
     }
-
-    function generatePlanAccuracy(tasksInfo: ITasksInfo): JQuery<HTMLElement> {
+    function generatePlanAccuracy(tasksInfo) {
         const planAccuracy = $('<div class="jira-planned-hours-plan-accuracy"></div>');
-
         const completedTasksColumnIds = new Set(COLUMNS_INFO.list.slice(COLUMNS_INFO.list.length - 1, COLUMNS_INFO.list.length));
         console.log('completedTasksColumnIds:', completedTasksColumnIds);
-
         let totalPlanned = 0;
         let totalSpent = 0;
-
-        let underestimatedTasks: ITaskInfo[] = [];
-        let overstatedTasks: ITaskInfo[] = [];
-
+        let underestimatedTasks = [];
+        let overstatedTasks = [];
         for (let task of tasksInfo.allTasks) {
             if (task.details == null || task.columnId == null) {
                 throw new Error('task has not details! id=' + task.id);
             }
-
             let timeLeft = task.details.plannedHours - task.details.spentHours;
             let deviation = Math.abs(timeLeft);
-
             if (deviation > TASK_PLAN_DEVIATION_BORDER) {
                 if (timeLeft < 0) {
                     underestimatedTasks.push(task);
-                } else if (timeLeft > 0 && completedTasksColumnIds.has(task.columnId)) {
+                }
+                else if (timeLeft > 0 && completedTasksColumnIds.has(task.columnId)) {
                     overstatedTasks.push(task);
                 }
             }
-
             totalPlanned += task.details.plannedHours;
             totalSpent += task.details.spentHours;
         }
-
         let totalLeft = totalPlanned - totalSpent;
-
-        let comparator = (a: ITaskInfo, b: ITaskInfo): number => {
+        let comparator = (a, b) => {
             if (a.details == null || b.details == null) {
                 throw new Error('either a or b details is null!');
             }
-
             const aDeviation = Math.abs(a.details.spentHours - a.details.plannedHours);
             const bDeviation = Math.abs(b.details.spentHours - b.details.plannedHours);
-
             return bDeviation - aDeviation;
         };
         underestimatedTasks.sort(comparator);
         overstatedTasks.sort(comparator);
-
         let leftClass = '';
         if (totalLeft >= 0) {
             leftClass = 'ac-green';
-        } else {
+        }
+        else {
             leftClass = 'ac-red';
         }
-
-        planAccuracy.append(
-            $(`
+        planAccuracy.append($(`
             <div class="jira-planned-hours-plan-accuracy-common">
                 <h3>Сводка</h3>
                 <div>Всего запланировано: ${totalPlanned.toFixed(1)}ч</div>
                 <div>Всего потрачено: ${totalSpent.toFixed(1)}ч</div>
                 <div>Всего осталось: <span class="${leftClass}">${totalLeft.toFixed(1)}ч</span></div>
             </div>
-        `)
-        );
-
-        const underestimated = $(
-            '<div class="jira-planned-hours-plan-accuracy-underestimated"><h3>Недооцененные по времени задачи (выборка из всех задач)</h3><table></table></div>'
-        );
-        const overstated = $(
-            '<div class="jira-planned-hours-plan-accuracy-underestimated"><h3>Переоцененные по времени задачи (выборка только из выполненных задач)</h3><table></table></div>'
-        );
-
+        `));
+        const underestimated = $('<div class="jira-planned-hours-plan-accuracy-underestimated"><h3>Недооцененные по времени задачи (выборка из всех задач)</h3><table></table></div>');
+        const overstated = $('<div class="jira-planned-hours-plan-accuracy-underestimated"><h3>Переоцененные по времени задачи (выборка только из выполненных задач)</h3><table></table></div>');
         const underestimatedTable = underestimated.find('table');
         const overstatedTable = overstated.find('table');
-
-        const fillTable = (tableElement: JQuery<HTMLElement>, tasks: ITaskInfo[]) => {
-            tableElement.append(
-                $(`
+        const fillTable = (tableElement, tasks) => {
+            tableElement.append($(`
                 <tr>
                     <th>ID</th>
                     <th>Заголовок</th>
@@ -879,29 +722,25 @@
                     <th class="jira-planned-hours-plan-accuracy-time">Потрачено</th>
                     <th class="jira-planned-hours-plan-accuracy-time">Осталось</th>
                 </tr>
-            `)
-            );
-
+            `));
             for (let task of tasks) {
                 if (task.details == null) {
                     throw new Error('missing details');
                 }
                 const details = task.details;
-
                 let [asignee, author] = generateAsigneeAndAuthor(task);
-
                 let leftClass = '';
                 let deviation = Math.abs(details.plannedHours - details.spentHours);
                 if (deviation < 2) {
                     leftClass = 'ac-green';
-                } else if (deviation < 5) {
+                }
+                else if (deviation < 5) {
                     leftClass = 'ac-yellow';
-                } else {
+                }
+                else {
                     leftClass = 'ac-red';
                 }
-
-                tableElement.append(
-                    $(`
+                tableElement.append($(`
                     <tr>
                         <td>
                             <a href="https://jira.kalabi.ru/browse/${task.id}">${task.id}</a>
@@ -925,39 +764,27 @@
                             ${(details.plannedHours - details.spentHours).toFixed(1)}ч
                         </td>
                     </tr>
-                `)
-                );
+                `));
             }
         };
-
         fillTable(underestimatedTable, underestimatedTasks);
         fillTable(overstatedTable, overstatedTasks);
-
         planAccuracy.append(underestimated);
         planAccuracy.append(overstated);
-
         return planAccuracy;
     }
-
-    function showTasksInfo(tasksInfo: ITasksInfo): void {
+    function showTasksInfo(tasksInfo) {
         const infoElement = ELEMENTS['#jira-planned-hours-info-bar'];
         infoElement.get(0).innerHTML = '';
-
         const timeByPerson = generateTimeByPersonElement(tasksInfo);
         const tasksWithoutPlannedTime = generateTasksWithoutPlannedTimeElement(tasksInfo);
         const planAccuracy = generatePlanAccuracy(tasksInfo);
-
-        infoElement.append(
-            $(`<div>Дата последнего обновления: ${moment(tasksInfo.lastUpdateDate).format('DD.MM.YYYY HH:mm:ss')}</div>`)
-        );
-
+        infoElement.append($(`<div>Дата последнего обновления: ${moment(tasksInfo.lastUpdateDate).format('DD.MM.YYYY HH:mm:ss')}</div>`));
         addSpoilerBlock('Запланированное время для каждого человека', timeByPerson);
         addSpoilerBlock('Анализ отклонения от плана', planAccuracy);
         addSpoilerBlock('Задачи без запланированного времени', tasksWithoutPlannedTime);
-
         infoElement.css('display', 'block');
     }
-
     function clear() {
         stopLoadingBar();
         ELEMENTS['#jira-planned-hours-info-bar'].css('display', 'none');
@@ -965,10 +792,8 @@
         TXID += 1;
         clearTasksInfoFromLocalStorage();
     }
-
     async function countPlannedHours() {
         console.log('start counting');
-
         const [tasksIds, taskIdToColumnId] = getTaskIdsFromSprintPage();
         const tasksInfo = await getTasksInfo(tasksIds, taskIdToColumnId);
         saveTasksInfoToLocalStorage(tasksInfo);
