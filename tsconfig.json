@@ -1,0 +1,30 @@
+{
+    "compilerOptions": {
+        "moduleResolution": "node",
+        "target": "es2019",
+        "noImplicitAny": false,
+        "outDir": "./",
+        "preserveConstEnums": true,
+        "experimentalDecorators": true,
+        "baseUrl": "./",
+        "strictFunctionTypes": true,
+        "strictPropertyInitialization": true,
+        "pretty": true,
+        "sourceMap": false,
+        "allowJs": false,
+        "removeComments": false,
+        "strictNullChecks": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "paths": {
+            "src/*": ["src/*"]
+        }
+    },
+    "files": [
+        "jira_planned_hours.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        "./jira_planned_hours.js"
+    ]
+}
