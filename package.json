@@ -1,6 +1,6 @@
 {
   "name": "jira-planned-hours",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Jira script to count planned and spent hours per employee",
   "main": "index.js",
   "devDependencies": {
