@@ -1,0 +1,26 @@
+{
+  "name": "jira-planned-hours",
+  "version": "0.0.1",
+  "description": "Jira script to count planned and spent hours per employee",
+  "main": "index.js",
+  "devDependencies": {
+    "@types/jquery": "3.5.5",
+    "@types/moment": "2.13.0",
+    "moment": "2.29.1",
+    "typescript": "4.1.3"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "version": "./release.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feleks/jira-planned-hours.git"
+  },
+  "author": "feleks",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/feleks/jira-planned-hours/issues"
+  },
+  "homepage": "https://github.com/feleks/jira-planned-hours#readme"
+}
